@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
-NERIAD V6.13 — SHARING EDITION — authoring features intact and Heart ending gently pulled back.
-NERIAD - The Living Cathedral
+NERIAD V6.14 — COMPATIBILITY REVIEW — world, camera, tour and audio preserved from V6.13.
+NERIAD — The Living Cathedral
 An adapted work based on Abyssal Garden by Maksymilian Dendura.
 Original: https://github.com/Noniv/abyssal-garden
 V6 adaptation: preserves the cathedral world; adds controlled mix, positional acoustic sources, subtle shader response to authored notes, and a timed three-act Choir-inclusive tour.
@@ -89,6 +89,21 @@ p { margin: 0; }
 }
 .e #p { visibility: hidden; }
 .e #s { font-size: 1.1em; letter-spacing: 0; text-transform: none; }
+
+/* V6.14: friendly compatibility explanations, shown only when WebGPU initialization fails. */
+#compatPanel[hidden]{display:none!important}
+.e #compatPanel{display:grid;justify-items:center;gap:.55em;width:min(27em,100%);padding:.1em .3em;box-sizing:border-box}
+#compatTitle{font:800 1.12em/1.2 system-ui;color:#e9fdff;letter-spacing:0;text-transform:none;text-wrap:balance}
+#compatExplanation{font:500 .91em/1.35 system-ui;letter-spacing:0;text-transform:none;color:#cceaf0;max-width:43ch;text-wrap:pretty}
+#compatSuggestion{font:500 .78em/1.35 system-ui;color:#b0d7df;max-width:52ch;letter-spacing:0;text-transform:none}
+#compatButtons{display:flex;gap:.65em;justify-content:center;flex-wrap:wrap}
+#compatButtons button{font-size:.75em;letter-spacing:.01em;text-transform:none;padding:.70em .85em;box-shadow:inset 0 -.12em #0003,0 .18em .7em #0007}
+#compatRetry{background:linear-gradient(#9ff6ff,#19c3d6)}
+#compatCopy{background:#173b49;color:#e4fbff;border:1px solid #6db3c0}
+#compatStatus{font:500 .7em/1.2 system-ui;color:#b0d7df;min-height:1em;letter-spacing:0}
+.e #s{font-size:.76em;color:#93d5df;line-height:1.25;max-width:40ch}
+.e #w{display:none}
+@media(max-height:390px){.e #m{padding:0 .5em 3.5em;gap:.7em}.e h1{font-size:3.1em}.e #compatPanel{gap:.3em}.e #compatExplanation{font-size:.80em}.e #compatSuggestion{font-size:.70em}.e #f{bottom:.45em;transform:scale(.85)}}
 
 /* buttons */
 button, a {
@@ -195,7 +210,14 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 <div id=m>
   <h1>NERIAD</h1>
   <div id=a>
-    <div id=l><div id=p><i id=b></i></div><p id=s>Diving…</p><p id=w hidden>iPhone/iPad: use Safari on iOS 26+ · Android/desktop: current Chrome or Edge</p></div>
+    <div id=l><div id=p><i id=b></i></div><p id=s>Diving…</p><p id=w hidden>iPhone/iPad: use Safari on a supported device · Android/desktop: current Chrome or Edge</p>
+      <section id=compatPanel role=alert aria-live=assertive hidden>
+        <p id=compatTitle>This device couldn't start NERIAD</p>
+        <p id=compatExplanation></p>
+        <p id=compatSuggestion></p>
+        <div id=compatButtons><button id=compatRetry type=button>Try again</button><button id=compatCopy type=button>Copy diagnostics</button></div>
+        <p id=compatStatus role=status aria-live=polite></p>
+      </section></div>
     <div id=g>
       <button id=d>Enter NERIAD</button>
       <p id=q><span>Detail</span><button>Low</button><button>Medium</button><button>High</button></p>
@@ -244,6 +266,87 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 </div>
 <pre id=i></pre>
 <script>
+/* V6.14: crash-safe startup UI outside the 3D initialization closure.
+   Nothing is sent over the network: users opt in by selecting Copy diagnostics. */
+const NERIAD_STARTUP = (() => {
+  const $c = (id) => document.getElementById(id);
+  const isApple = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const platformName = isApple ? 'iPhone/iPad' : isAndroid ? 'Android' : 'Desktop/other';
+  const platformTip = isApple
+    ? 'Open the HTTPS link directly in Safari, not a Files or WhatsApp preview. Update iOS if available. Some iPhones and iPads cannot run WebGPU scenes.'
+    : isAndroid
+    ? 'Open the HTTPS link in updated Chrome, outside WhatsApp or other in-app browsers. If it loads but struggles, choose Low quality on the welcome screen.'
+    : 'Open the HTTPS link in an updated Chrome, Edge or supported Safari browser. Check the browser and graphics-driver updates if available.';
+  const help = {
+    insecure_context: ['This page needs a secure browser connection.', 'WebGPU requires a secure context. Open the published HTTPS address instead of a downloaded file or embedded preview.'],
+    missing_webgpu: ['WebGPU is unavailable here.', 'This browser or device does not expose the graphics technology NERIAD needs.'],
+    adapter_failed: ['No compatible graphics adapter was found.', 'The browser exposes WebGPU but could not select a usable graphics adapter. This may be a browser, device or driver limitation.'],
+    adapter_error: ['Graphics compatibility check failed.', 'The browser encountered an error while requesting a WebGPU adapter.'],
+    device_failed: ['NERIAD could not initialize the graphics device.', 'A graphics adapter was found, but the WebGPU device could not be created.'],
+    gpu_lost: ['NERIAD lost its graphics device.', 'The GPU stopped responding or the browser reset the graphics connection. Lower graphics settings may help after reloading.'],
+    scene_start_failed: ['NERIAD could not finish starting.', 'The browser encountered an error while building the underwater scene.'],
+    unknown_error: ['NERIAD could not start.', 'An unexpected problem prevented the underwater world from loading.']
+  };
+  const state = { stage: 'Opening page', code: 'none', detail: '', adapter: 'not requested', device: 'not requested' };
+  function browserSummary() {
+    const ua = navigator.userAgent;
+    const browser = /EdgA?\//.test(ua) ? 'Edge' : /CriOS\//.test(ua) ? 'Chrome on iOS' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Other browser';
+    return browser;
+  }
+  function diagnostics() {
+    return [
+      'NERIAD V6.14 - device diagnostics (copied manually)',
+      'Date: ' + new Date().toISOString(),
+      'Page: ' + location.origin + location.pathname,
+      'Platform: ' + platformName,
+      'Browser: ' + browserSummary(),
+      'Secure context: ' + String(isSecureContext),
+      'WebGPU API: ' + String(!!navigator.gpu),
+      'Adapter: ' + state.adapter,
+      'Device: ' + state.device,
+      'Stage: ' + state.stage,
+      'Issue: ' + state.code,
+      'Details: ' + (state.detail || 'No additional details'),
+      'Screen: ' + innerWidth + 'x' + innerHeight,
+      'User agent: ' + navigator.userAgent,
+      'No diagnostics were transmitted automatically.'
+    ].join('\n');
+  }
+  function show(code, detail='', stage=state.stage) {
+    state.code = code in help ? code : 'unknown_error';
+    state.detail = String(detail || '').slice(0, 350);
+    state.stage = stage;
+    const [title, description] = help[state.code];
+    document.body.className = 'l e';
+    $c('s').textContent = 'Unable to enter the underwater world';
+    $c('compatTitle').textContent = title;
+    $c('compatExplanation').textContent = description;
+    $c('compatSuggestion').textContent = platformTip;
+    $c('compatStatus').textContent = '';
+    $c('compatPanel').hidden = false;
+    $c('w').hidden = true;
+  }
+  $c('compatRetry').addEventListener('click', () => location.reload());
+  $c('compatCopy').addEventListener('click', async () => {
+    const info = diagnostics();
+    const status = $c('compatStatus');
+    try {
+      if (!navigator.clipboard?.writeText) throw Error('Clipboard API unavailable');
+      await navigator.clipboard.writeText(info);
+      status.textContent = 'Diagnostics copied. Share only if you wish.';
+    } catch {
+      try {
+        const ta=document.createElement('textarea');ta.value=info;ta.style.cssText='position:fixed;top:-9999px';document.body.appendChild(ta);ta.select();
+        if(!document.execCommand('copy')) throw Error('Copy failed');
+        ta.remove();status.textContent='Diagnostics copied. Share only if you wish.';
+      } catch {
+        status.textContent='Clipboard unavailable. You can still share a screenshot of this error.';
+      }
+    }
+  });
+  return { show, state };
+})();
 (async()=>{
 // ============================================================================
 // quality level, chosen before anything is built
@@ -2014,25 +2117,49 @@ const say = (m, to, ms) => {
   // go on once the animation runs: one not started before the thread gets busy stays stuck (timer: hidden tabs)
   return new Promise((r) => { a.ready.then(() => setTimeout(r)); setTimeout(r, document.hidden ? 0 : 1e3); });
 };
-const fail = (m) => { throw new Error(m, { cause: 1 }); }; // cause marks a message that is shown as it is
-const appleMobile = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const webgpuHelp = appleMobile
-  ? 'WebGPU is unavailable here. Open the HTTPS website directly in Safari on a supported iPhone or iPad with iOS/iPadOS 26 or later. A Files or messaging preview may not support WebGPU.'
-  : 'WebGPU is unavailable in this browser or preview. Open the HTTPS website in a current Chrome, Edge, or Safari browser on a compatible device.';
-if (!navigator.gpu) fail(webgpuHelp);
-const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-if (!adapter) fail(appleMobile
-  ? 'No compatible WebGPU graphics adapter was found. Try opening the HTTPS site in Safari; your device may not support this scene.'
-  : 'No compatible WebGPU graphics adapter was found. Try a supported device or up-to-date browser.');
-$('w').hidden = !!navigator.userAgentData; // only Chromium-based browsers have it
-const hasTS = adapter.features.has('timestamp-query');
-const device = await adapter.requestDevice({ requiredFeatures: hasTS ? ['timestamp-query'] : [] });
+// Compatibility checks are staged so visitors see a meaningful error rather than a blank screen.
+function startupFail(code, message) {
+  const e = new Error(message || code);
+  e.neriadCode = code;
+  throw e;
+}
+NERIAD_STARTUP.state.stage = 'Secure context';
+if (!isSecureContext) startupFail('insecure_context', 'This page is not a secure context');
+NERIAD_STARTUP.state.stage = 'WebGPU API';
+if (!navigator.gpu) startupFail('missing_webgpu', 'navigator.gpu unavailable');
+NERIAD_STARTUP.state.stage = 'Graphics adapter';
+let adapter;
+try {
+  adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  // Some browser/device combinations only expose an adapter with the default preference.
+  if (!adapter) adapter = await navigator.gpu.requestAdapter();
+} catch (e) { startupFail('adapter_error', e?.message || 'Adapter request threw an exception'); }
+if (!adapter) startupFail('adapter_failed', 'Both high-performance and default adapter requests returned null');
+NERIAD_STARTUP.state.adapter = 'available';
+$('w').hidden = !!navigator.userAgentData;
+NERIAD_STARTUP.state.stage = 'WebGPU device';
+let hasTS = !!adapter.features?.has('timestamp-query');
+let device;
+try {
+  device = await adapter.requestDevice({ requiredFeatures: hasTS ? ['timestamp-query'] : [] });
+} catch (e) {
+  // A timestamp-query failure need not rule out basic rendering support.
+  if (hasTS) {
+    try { device = await adapter.requestDevice(); hasTS = false; } catch (retryError) {
+      startupFail('device_failed', retryError?.message || e?.message || 'Device request failed');
+    }
+  } else startupFail('device_failed', e?.message || 'Device request failed');
+}
+NERIAD_STARTUP.state.device = 'available';
+NERIAD_STARTUP.state.stage = 'Building scene';
 device.addEventListener('uncapturederror', (e) => console.error('GPU: ' + e.error.message));
-// out of memory or a GPU timeout: reload a level lower, or on Low say what happened
+// Device loss: keep the pre-existing automatic downgrade path; display helpful diagnostics on Low.
 device.lost.then((l) => {
-  if (l.reason === 'destroyed') return; // the page is closing
-  if (LV < 2) { keep('neriadV6', LV + 1); location.reload(); }
-  dead = body.className = 'l e'; $('s').textContent = 'The graphics device was lost. Reload the page to try again.';
+  if (l.reason === 'destroyed') return;
+  if (LV < 2) { keep('neriadV6', LV + 1); location.reload(); return; }
+  dead = true;
+  console.error('NERIAD GPU device lost:', l.reason, l.message);
+  NERIAD_STARTUP.show('gpu_lost', [l.reason,l.message].filter(Boolean).join(': '), 'Running world');
 });
 const ctx = canvas.getContext('webgpu'), FMT = navigator.gpu.getPreferredCanvasFormat();
 // V6.2: default rendering is unchanged. QA mode freezes time & camera for comparable screenshots.
@@ -3520,7 +3647,7 @@ const mute=()=>{
 };
 document.addEventListener('visibilitychange',()=>{if(AC)document.hidden?AC.suspend():AC.resume();});
 
-})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'Failed to start: ')+e.message});
+})().catch(e=>{console.error('NERIAD startup:',e);NERIAD_STARTUP.show(e?.neriadCode || 'scene_start_failed',e?.message || String(e),NERIAD_STARTUP.state.stage);});
 </script>
 </body>
 </html>
