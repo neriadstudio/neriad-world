@@ -1,4 +1,4 @@
-# NERIAD — The Living Cathedral 🌊
+# NERIAD - The Living Cathedral 🌊
 
 An experimental, interactive underwater fantasy world. Explore six destinations in the browser, or watch the two-minute cinematic tour, with generative audio.
 
