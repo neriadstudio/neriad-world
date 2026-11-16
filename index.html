@@ -1,6 +1,7 @@
 <!doctype html>
 <!--
-NERIAD V6.14 — COMPATIBILITY REVIEW — world, camera, tour and audio preserved from V6.13.
+NERIAD V6.15 — SHARE CANDIDATE — derives from V6.14; only visitor tour 94-112s and Heart clearance audit differ.
+Production website remains V6.14 until user tests this review.
 NERIAD — The Living Cathedral
 An adapted work based on Abyssal Garden by Maksymilian Dendura.
 Original: https://github.com/Noniv/abyssal-garden
@@ -2444,7 +2445,40 @@ for (let t = 0; t <= FLYT; t += 0.1) { F[FLT] = t; flyAt(); flyPts.push([F[CX], 
 // V6.13 preserves V6.12's gentle Heart finale. The visitor's last eight seconds remain intact.
 // Procedural world generation above still receives the exact V6.11 flyPts/FLY route.
 // The finishing composition uses the user's already-approved saved V6.5 Heart camera.
+// The 112–120 s finale is protected and unchanged. Only the preceding visitor route
+// is adjusted, after world generation and outside the source FLY spline.
 const FINALE_START = 112;
+const HEART_RECOVERY_START = 94;
+const HEART_RECOVERY_END = 112;
+// Additive, C2-continuous offsets on the approach through the nave right aisle.
+// Endpoint shifts are identically zero: original route until 94s and final pullback at 112s.
+// Positional values are authored relative to source spline; they do NOT regenerate world meshes.
+const HEART_BYPASS_KNOTS = [
+  [94,0,0,0],[96,0,0,0],[98,.8,0,0],[100,4.8,-.05,0],
+  [102,9.5,-.18,0],[104,13,-.32,0],[106,13,-.45,0],
+  [108,10,-.35,0],[110,4.5,-.16,0],[112,0,0,0]
+];
+function heartBypass(t, out) {
+  out[0]=out[1]=out[2]=0;
+  if (t<=HEART_RECOVERY_START || t>=HEART_RECOVERY_END) return;
+  for(let i=1;i<HEART_BYPASS_KNOTS.length;i++) {
+    const a=HEART_BYPASS_KNOTS[i-1], b=HEART_BYPASS_KNOTS[i];
+    if(t>b[0])continue;
+    const u=TOUR_SMOOTHER((t-a[0])/(b[0]-a[0]));
+    for(let q=0;q<3;q++)out[q]=a[q+1]+(b[q+1]-a[q+1])*u;
+    return;
+  }
+}
+const HEART_OFFSET = new Float64Array(3);
+// Conservative shell enclosing the authored crystal cluster at (0,-30.8,-66).
+// The real mesh has a central 6.7m spike plus ten satellite spikes; this tests
+// a slightly expanded cylinder, not a triangle-accurate collision mesh.
+function heartCrystalDistance(x,y,z){
+  const radius=hypot(x,z+66)-4.65;
+  const height=max(-38.2-y, y+22.0);
+  return hypot(max(radius,0),max(height,0))+min(max(radius,height),0);
+}
+
 const FINALE_HEART_POSE = [10.0446, -33.9783, -80.625, 0, -32.2, -65];
 let finaleAnchor = null;
 // The world generator and original authored spline are frozen. Safe visitor-only reroutes
@@ -2464,6 +2498,13 @@ function flyAtVisitor() {
     const u = clamp((F[FLT] - FINALE_START) / (FLYT - FINALE_START), 0, 1);
     const smooth = u * u * (3 - 2 * u);
     for (let i = 0; i < 6; i++) P6[i] = mix(finaleAnchor[i], FINALE_HEART_POSE[i], smooth);
+  }
+  // V6.15: leave the original spline and recorded world generator untouched.
+  // Apply the smooth authored detour only within 94 < t < 112 seconds.
+  if (F[FLT] > HEART_RECOVERY_START && F[FLT] < HEART_RECOVERY_END) {
+    heartBypass(F[FLT], HEART_OFFSET);
+    for(let q=0;q<3;q++)P6[q]+=HEART_OFFSET[q];
+    // Keep the Heart as the visual target. Do not move the look-at point.
   }
   if (!TOUR_BAKING && TOUR_PATCHES.length) {
     for (const patch of TOUR_PATCHES) {
@@ -2865,9 +2906,9 @@ function collide() {
 // This runs at startup, using the SAME signed rock collision field as swimming, plus
 // explicit stone-column and scattered-boulder approximations.  It does not
 // add collision responses during the tour, change timing, or regenerate scenery.
-const TOUR_REPORT={version:'V6.13',timeStep:0.25,span:120,originalWarnings:0,
+const TOUR_REPORT={version:'V6.15',timeStep:0.25,span:120,originalWarnings:0,
   repairedWarnings:0,protectedWarnings:0,patches:[],remaining:[],passes:0,maxStep:0,originalMaxStep:0,
-  note:'Runtime generated-world collision audit; forward visibility checked within 3.8m; visual approval still required.'};
+  note:'V6.15: pre-baked terrain/column/rock audit plus conservative Heart crystal envelope, full forward visibility check; no corrections while playing. Visual approval still required.'};
 function bakeTourSafety(){
   const rate=4, n=FLYT*rate+1;
   const savedFlt=F[FLT],savedP=Array.from(P6),savedCam=[F[CX],F[CY],F[CZ]];
@@ -2899,6 +2940,10 @@ function bakeTourSafety(){
       if(abs(x-r[0])>r[3]+3 || abs(z-r[2])>r[3]+3 || abs(y-r[1])>r[3]+3) continue;
       d=min(d,hypot(x-r[0],(y-r[1])/.83,z-r[2])-r[3]);
     }
+    // Crystal triangles are authored separately and absent from the rock SDF.
+    // A conservative Heart envelope catches the previous approach through the spikes.
+    if(abs(x)<17 && abs(z+66)<22 && y>-47 && y<-16)
+      d=min(d,heartCrystalDistance(x,y,z));
     return d;
   }
   function danger(p){
@@ -3001,16 +3046,37 @@ function bakeTourSafety(){
   }
   TOUR_REPORT.maxStep=+maxStep.toFixed(3);
   TOUR_REPORT.originalMaxStep=+originalMaxStep.toFixed(3);
+  // Heart-specific diagnostics, including the protected 112s handoff.
+  // Confirm camera clearance AND forward visibility throughout 94–112s.
+  let minHeart=1e9,minForward=1e9,maxQuarter=0,prevPoint=null;
+  let heartWarnings=0;
+  for(let i=94*rate;i<=112*rate;i++){
+    const p=current(i),t=i/rate;
+    const c=heartCrystalDistance(p[0],p[1],p[2]);
+    minHeart=min(minHeart,c);
+    const vx=p[3]-p[0],vy=p[4]-p[1],vz=p[5]-p[2],vl=hypot(vx,vy,vz)||1;
+    for(const v of [1.25,2.5,3.8]){
+      minForward=min(minForward,heartCrystalDistance(p[0]+vx/vl*v,p[1]+vy/vl*v,p[2]+vz/vl*v));
+    }
+    if(c<.82 || danger(p)>.04)heartWarnings++;
+    if(prevPoint)maxQuarter=max(maxQuarter,hypot(p[0]-prevPoint[0],p[1]-prevPoint[1],p[2]-prevPoint[2]));
+    prevPoint=p;
+  }
+  TOUR_REPORT.heartApproach={window:[94,112],minCrystalClearance:+minHeart.toFixed(2),
+    minForwardCrystalClearance:+minForward.toFixed(2),riskSamples:heartWarnings,
+    maxTravelPerQuarterSecond:+maxQuarter.toFixed(3),
+    approximateGeometry:'expanded cylinder around crystal cluster',
+    recommended:'inspect actual mobile tour before publication'};
   F[FLT]=savedFlt;for(let k=0;k<6;k++)P6[k]=savedP[k];
   F[CX]=savedCam[0];F[CY]=savedCam[1];F[CZ]=savedCam[2];aim();
-  console.info('NERIAD V6.13 visitor tour preflight:',TOUR_REPORT);
+  console.info('NERIAD V6.15 visitor tour preflight:',TOUR_REPORT);
 }
 bakeTourSafety();
 // Audit export is available in Review only; no QA controls are surfaced to share visitors.
 function exportTourAudit(){
   const blob=new Blob([JSON.stringify(TOUR_REPORT,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.download='NERIAD_V6_13_Tour_Audit.json';a.href=url;document.body.appendChild(a);a.click();a.remove();
+  a.download='NERIAD_V6_15_Tour_Audit.json';a.href=url;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),5000);
 }
 
